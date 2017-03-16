@@ -13,6 +13,7 @@
 
 #include "qemu/osdep.h"
 #include <sys/ioctl.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <dirent.h>
 #include <utmpx.h>
@@ -2423,6 +2424,12 @@ GuestMemoryBlockInfo *qmp_guest_get_memory_block_info(Error **errp)
     return NULL;
 }
 
+GuestOSInfo *qmp_guest_get_osinfo(Error **errp)
+{
+    error_setg(errp, QERR_UNSUPPORTED);
+    return NULL;
+}
+
 #endif
 
 #if !defined(CONFIG_FSFREEZE)
@@ -2578,4 +2585,37 @@ GuestUserList *qmp_guest_get_users(Error **err)
     endutxent();
     g_hash_table_destroy(cache);
     return head;
+}
+
+GuestOSRelease *qmp_guest_get_osrelease(Error **errp)
+{
+    GuestOSRelease *info = g_new0(GuestOSRelease, 1);
+    memset(info, 0, sizeof(GuestOSRelease));
+
+    struct utsname kinfo;
+    uname(&kinfo);
+
+    if (!g_file_get_contents("/etc/os-release", &info->content, NULL,
+                             NULL)){
+        g_file_get_contents("/usr/lib/os-release", &info->content,
+                            NULL, NULL);
+    }
+
+    char *extension = g_strdup_printf(
+        "\n"
+        "QGA_UNAME_RELEASE=\"%s\"\n"
+        "QGA_UNAME_VERSION=\"%s\"\n"
+        "QGA_UNAME_MACHINE=\"%s\"\n",
+        kinfo.release,
+        kinfo.version,
+        kinfo.machine
+    );
+    if (info->content != NULL) {
+        char *previous = info->content;
+        info->content = g_strconcat(previous, extension, NULL);
+        g_free(previous);
+    } else {
+        info->content = extension;
+    }
+    return info;
 }
