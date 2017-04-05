@@ -49,6 +49,30 @@ extern char **environ;
 #endif
 #endif
 
+static int ga_execle(char const *path, char const *arg, ...)
+{
+    GPtrArray *argv = g_ptr_array_new();
+    g_ptr_array_add(argv, (gpointer)arg);
+    if (g_getenv("container") != NULL) {
+        g_ptr_array_add(argv, (char *)"--mount=/proc/1/ns/mnt");
+        g_ptr_array_add(argv, (char *)"--");
+        g_ptr_array_add(argv, (char *)path);
+        path = "/usr/bin/nsenter";
+    }
+    va_list ap;
+    va_start(ap, arg);
+    char *value = NULL;
+    do {
+        value = va_arg(ap, char *);
+        g_ptr_array_add(argv, value);
+    } while (value);
+    char *const *envp = va_arg(ap, char *const *);
+    va_end(ap);
+    int result = execvpe(path, (char *const *)argv->pdata, envp);
+    g_ptr_array_unref(argv);
+    return result;
+}
+
 static void ga_wait_child(pid_t pid, int *status, Error **errp)
 {
     pid_t rpid;
@@ -96,7 +120,7 @@ void qmp_guest_shutdown(bool has_mode, const char *mode, Error **errp)
         reopen_fd_to_null(1);
         reopen_fd_to_null(2);
 
-        execle("/sbin/shutdown", "shutdown", "-h", shutdown_flag, "+0",
+        ga_execle("/sbin/shutdown", "shutdown", "-h", shutdown_flag, "+0",
                "hypervisor initiated shutdown", (char*)NULL, environ);
         _exit(EXIT_FAILURE);
     } else if (pid < 0) {
@@ -183,7 +207,7 @@ void qmp_guest_set_time(bool has_time, int64_t time_ns, Error **errp)
 
         /* Use '/sbin/hwclock -w' to set RTC from the system time,
          * or '/sbin/hwclock -s' to set the system time from RTC. */
-        execle("/sbin/hwclock", "hwclock", has_time ? "-w" : "-s",
+        ga_execle("/sbin/hwclock", "hwclock", has_time ? "-w" : "-s",
                NULL, environ);
         _exit(EXIT_FAILURE);
     } else if (pid < 0) {
@@ -1146,7 +1170,7 @@ static void execute_fsfreeze_hook(FsfreezeHookArg arg, Error **errp)
         reopen_fd_to_null(1);
         reopen_fd_to_null(2);
 
-        execle(hook, hook, arg_str, NULL, environ);
+        ga_execle(hook, hook, arg_str, NULL, environ);
         _exit(EXIT_FAILURE);
     } else if (pid < 0) {
         error_setg_errno(errp, errno, "failed to create child process");
@@ -1455,7 +1479,7 @@ static void bios_supports_mode(const char *pmutils_bin, const char *pmutils_arg,
         reopen_fd_to_null(2);
 
         if (pmutils_path) {
-            execle(pmutils_path, pmutils_bin, pmutils_arg, NULL, environ);
+            ga_execle(pmutils_path, pmutils_bin, pmutils_arg, NULL, environ);
         }
 
         /*
@@ -1538,7 +1562,7 @@ static void guest_suspend(const char *pmutils_bin, const char *sysfile_str,
         reopen_fd_to_null(2);
 
         if (pmutils_path) {
-            execle(pmutils_path, pmutils_bin, NULL, environ);
+            ga_execle(pmutils_path, pmutils_bin, NULL, environ);
         }
 
         /*
@@ -1999,9 +2023,9 @@ void qmp_guest_set_user_password(const char *username,
         reopen_fd_to_null(2);
 
         if (crypted) {
-            execle(passwd_path, "chpasswd", "-e", NULL, environ);
+            ga_execle(passwd_path, "chpasswd", "-e", NULL, environ);
         } else {
-            execle(passwd_path, "chpasswd", NULL, environ);
+            ga_execle(passwd_path, "chpasswd", NULL, environ);
         }
         _exit(EXIT_FAILURE);
     } else if (pid < 0) {
